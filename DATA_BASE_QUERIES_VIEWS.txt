@@ -1,0 +1,114 @@
+/*********************************************************************************************************/
+/* Project:                     SERCOP	                                                                 */
+/*                                                                                                       */
+/* File name:                   DATA_BASE_QUERIES_VIEWS                                                  */
+/*                                                                                                       */
+/* Description:                 - THIS FILES CONTAINS THE SQL CODE REQUIRED TO CREATE THE DATABASE  VIEWS
+								  AND SCRIPTS							   								 */ 
+/* First logged:                2015 APRIL. Updated:	NOVEMBER 2015		                                         */
+/* Programmed by:               Milenko Fadic                                                            */
+/* Input  files :               NONE								                                     */
+/* Temp   files:                NONE                                                                     */ 
+/* Output files :               DATABASE                                                                 */
+/*                                                                                                       */
+/*********************************************************************************************************/
+
+/* THE PROGRAMS ARE AS FOLLOWS
+1- PROC- DELETE RECORD FROM DATABASE
+2- PROC- UPDATE RECORD AS AUDITED IN DATABASE
+3- SELECT QUALIFIED PROVIDERS
+4- Creating A VIEW OF ALL PUBLIC PURCHASES
+*/
+
+--1- PROC- DELETE RECORD FROM DATABASE
+create proc  
+delete_balances  @ruc numeric,
+                 @fecha numeric
+				 as
+				delete from COMPANIAS_BALANCES where ruc=@ruc	and anio=	@fecha
+				update companias_balance_tracking set ENTERED_DB=null where RUC_COMPANIA=@ruc and fecha=@fecha
+				go 
+--2- PROC- UPDATE RECORD AS AUDITED IN DATABASE
+
+create proc  
+AUDIT 			@result numeric, 
+				@ruc numeric, @fecha numeric
+				as
+				update companias_balance_tracking set audited_verified=@result
+				where RUC_COMPANIA=@ruc and fecha=@fecha
+				go 
+
+
+
+--3- SELECT QUALIFIED PROVIDERS
+
+ select * INTO #SCRAP_COMP 
+	from PROVEEDORES where aruc in (
+				Select distinct(aruc) from PROVEEDORES_INVITADOS 
+						where (CALIFICA='1' or ganador='1')
+				and aruc in
+					select aruc from PROVEEDORES
+						where descripcion not in ('PN','NC'))
+				and aruc not in 
+					(select 'a'+ruc from COMPANIAS)
+		
+		)
+	
+
+--4- ALL PUBLIC PURCHASES
+
+	CREATE VIEW OVERVIEW_OBRAS AS   --THIS COUNTS ALL THE MENOR CUANTIA IN THE ORIGINAL SOURCE
+		WITH CTE AS(
+				SELECT COUNT(CODIGO) ORIGINAL_SOURCE_TOTAL, ANO
+					 FROM ORIGINAL_ALL_PURCHASES 
+						where Tipo_Proceso='MENOR CUANTIA'
+						and Tipo_compra='OBRA'
+						AND ANO IN ('2009','2010')
+						GROUP BY ANO)
+											/* SAME AS SELECT *  FROM ORIGINAL_ALL_PURCHASES 
+															where Tipo_Proceso='MENOR CUANTIA'
+															and Tipo_compra='OBRA' AND ANO IN ('2010')*/
+					
+			--MANY ORDERS HAVE MULTIPLE RECORDS, THUS TO FIND THE DISTINCT NUMBER OF RECORDS I USE THE FOLLOWING
+			,CTE2 AS(
+					SELECT COUNT (DISTINCT CODIGO) ORIGINAL_SOURCE_DISTINCT_ORDERS, ANO 
+						FROM ORIGINAL_ALL_PURCHASES 
+							where Tipo_Proceso='MENOR CUANTIA'
+							and Tipo_compra='OBRA'
+							AND ANO IN ('2009','2010')
+							GROUP BY ANO)
+			--FINALLY I LOOK AT THE ORDERS THAT ARE NOT REPEATED, I HAVE TO DO A SELECT OF SELECTS
+
+			,CTE3 as(
+					SELECT ANO, COUNT(A.NUMBER) AS ORIGINAL_SOURCE_ORDERS_SINGLE_RECORD
+						 FROM( 
+							SELECT ANO, COUNT(CODIGO) AS NUMBER 
+								 FROM ORIGINAL_ALL_PURCHASES
+									WHERE Tipo_Proceso='MENOR CUANTIA'
+									AND Tipo_compra='OBRA'
+									AND ANO IN ('2009', '2010')
+									GROUP BY ANO, CODIGO
+									HAVING COUNT(CODIGO)=1)
+								AS A
+							 GROUP BY ANO)
+		
+			--THE REFERENCE TABLE IS SERCOP,
+
+			 ,CTE4 AS(
+					SELECT COUNT(A.CODIGO) ORDERS_RECORD_SERCOP, B.ANO 
+						FROM OBRAS_MENOR_CUANTIA_SERCOP A
+							INNER JOIN ORIGINAL_ALL_PURCHASES B 
+									ON A.CODIGO=B.CODIGO
+										WHERE B.ANO IN ('2009','2010')
+						GROUP BY ANO)
+
+--THE NUMBER OF ORDERS THAT ARE NOT REPEATED
+				SELECT  A.ANO,  A.ORIGINAL_SOURCE_TOTAL,
+					    B.ORIGINAL_SOURCE_DISTINCT_ORDERS, 
+					    C.ORIGINAL_SOURCE_ORDERS_SINGLE_RECORD,
+						D.ORDERS_RECORD_SERCOP
+							FROM 
+								CTE A LEFT JOIN CTE2 B ON A.ANO=B.ANO 
+								LEFT JOIN  CTE3 C ON C.ANO=B.ANO 
+								LEFT JOIN  CTE4 D ON D.ANO=B.ANO
+
